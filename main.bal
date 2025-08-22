@@ -1,80 +1,60 @@
-import ballerina/io;
+import notification_service.websocket as ws;
+
 import ballerina/log;
-import ballerina/websocket;
 import ballerinax/kafka;
 
+configurable string KAFKA_SERVER_URL = ?;
 configurable kafka:ConsumerConfiguration consumerConfiguration = ?;
 
-listener kafka:Listener kafkaListener = new (kafka:DEFAULT_URL, consumerConfiguration);
+listener kafka:Listener kafkaListener = new (KAFKA_SERVER_URL, consumerConfiguration);
+
+type EventConsumerRecord record {|
+    *kafka:AnydataConsumerRecord;
+    Event value;
+|};
 
 service on kafkaListener {
 
-    remote function onConsumerRecord(kafka:Caller caller, kafka:BytesConsumerRecord[] records) {
-        foreach var 'record in records {
-            string message = 'record.value.toString();
-            io:println("Received notification message: ", message);
-            error? nh = sendNotificationToAll(message);
-            if nh is error {
-                log:printError("Condum");
-            }
+    function init() {
+        log:printInfo(`The Notification Service Listener Initiated.`);
+    }
+
+    remote function onConsumerRecord(kafka:Caller caller, EventConsumerRecord[] records) {
+        foreach EventConsumerRecord 'record in records {
+            Event event = 'record.value;
+            log:printInfo("Ride event received.", timestamp = 'record.timestamp, userId = event.userId, eventType = event.eventType);
+            handleEvent(event);
+        }
+    }
+
+    remote function onError(kafka:Error 'error, kafka:Caller caller) returns error? {
+        if 'error is kafka:PayloadBindingError || 'error is kafka:PayloadValidationError {
+            log:printError("Payload error occured", 'error);
+            check caller->seek({
+                partition: 'error.detail().partition,
+                offset: 'error.detail().offset + 1
+            });
+        } else {
+            log:printError("An error occured while lisening to ride events", 'error);
         }
     }
 }
 
-final map<websocket:Caller> clients = {};
-
-public function addClient(string userId, websocket:Caller caller) {
-    lock {
-        clients[userId] = caller;
-    }
-}
-
-public function removeClient(string userId) {
-    lock {
-        _ = clients.removeIfHasKey(userId);
-    }
-}
-
-public function sendNotificationToAll(string message) returns error? {
-    foreach var [_, caller] in clients.entries() {
-        check caller->writeMessage(message);
-    }
-}
-
-public function sendNotificationToUser(string userId, string message) returns error? {
-    websocket:Caller? caller = clients[userId];
-    if caller is websocket:Caller {
-        check caller->writeMessage(message);
-    }
-}
-
-service /notifications on new websocket:Listener(27760) {
-
-    resource function get .(string userId) returns websocket:Service|websocket:UpgradeError {
-        return new NotificationService(userId);
-    }
-}
-
-service class NotificationService {
-    *websocket:Service;
-
-    final string userId;
-
-    public function init(string userId) {
-        self.userId = userId;
+public function handleEvent(Event event) {
+    EventType eventType = event.eventType;
+    string msg;
+    if eventType is RIDE_STARTED {
+        RideStartedData eventData = <RideStartedData>event.data;
+        msg = string `🚴 Your ride with bike ${eventData.bikeId} has started at ${eventData.startStation}. \n
+                            Enjoy your journey!`;
+    } else if eventType is RIDE_ENDED {
+        RideEndedData eventData = <RideEndedData>event.data;
+        msg = string `✅ Your ride with bike ${eventData.bikeId} has ended.\n
+                            Duration: ${eventData.duration} seconds.\n
+                            Fare: ${eventData.fare.toString()} credits.`;
     }
 
-    remote function onOpen(websocket:Caller caller) {
-        io:println("WebSocket connected for user: ", self.userId);
-        addClient(self.userId, caller);
-    }
+    //save the notification to the database
 
-    remote function onTextMessage(websocket:Caller caller, string text) {
-        io:println("Received message from user: ", text);
-    }
-
-    remote function onClose(websocket:Caller caller, int statusCode, string reason) {
-        io:println("WebSocket closed for user: ", self.userId);
-        removeClient(self.userId);
-    }
+    ws:sendNotificationToUser(event.userId, msg);
 }
