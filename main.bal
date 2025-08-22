@@ -7,6 +7,7 @@ import ballerina/time;
 import ballerinax/kafka;
 
 configurable int PORT = ?;
+configurable string pub_key = ?;
 configurable string KAFKA_SERVER_URL = ?;
 configurable kafka:ConsumerConfiguration consumerConfiguration = ?;
 
@@ -44,6 +45,26 @@ service on kafkaListener {
     }
 }
 
+@http:ServiceConfig {
+    cors: {
+        allowOrigins: ["*"],
+        allowMethods: ["POST", "PUT", "GET", "POST", "OPTIONS"],
+        allowHeaders: ["Content-Type", "Access-Control-Allow-Origin", "X-Service-Name"]
+    },
+    auth: [
+        {
+            jwtValidatorConfig: {
+                issuer: "Orbyte",
+                audience: "vEwzbcasJVQm1jVYHUHCjhxZ4tYa",
+                signatureConfig: {
+                    certFile: pub_key
+                },
+                scopeKey: "scp"
+            },
+            scopes: "user"
+        }
+    ]
+}
 service /notification\-service on new http:Listener(PORT) {
     function init() {
         log:printInfo(`The Notification Service is initialized on PORT: ${PORT}`);
