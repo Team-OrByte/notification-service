@@ -1,80 +1,134 @@
-import ballerina/io;
+import notification_service.db;
+import notification_service.websocket as ws;
+
+import ballerina/http;
 import ballerina/log;
-import ballerina/websocket;
+import ballerina/time;
 import ballerinax/kafka;
 
+configurable int PORT = ?;
+configurable string pub_key = ?;
+configurable string KAFKA_SERVER_URL = ?;
 configurable kafka:ConsumerConfiguration consumerConfiguration = ?;
 
-listener kafka:Listener kafkaListener = new (kafka:DEFAULT_URL, consumerConfiguration);
+listener kafka:Listener kafkaListener = new (KAFKA_SERVER_URL, consumerConfiguration);
+
+type EventConsumerRecord record {|
+    *kafka:AnydataConsumerRecord;
+    Event value;
+|};
 
 service on kafkaListener {
 
-    remote function onConsumerRecord(kafka:Caller caller, kafka:BytesConsumerRecord[] records) {
-        foreach var 'record in records {
-            string message = 'record.value.toString();
-            io:println("Received notification message: ", message);
-            error? nh = sendNotificationToAll(message);
-            if nh is error {
-                log:printError("Condum");
-            }
+    function init() {
+        log:printInfo(`The Notification Service Listener Initiated.`);
+    }
+
+    remote function onConsumerRecord(kafka:Caller caller, EventConsumerRecord[] records) {
+        foreach EventConsumerRecord 'record in records {
+            Event event = 'record.value;
+            log:printInfo("Ride event received.", timestamp = 'record.timestamp, userId = event.userId, eventType = event.eventType);
+            handleEvent(event);
+        }
+    }
+
+    remote function onError(kafka:Error 'error, kafka:Caller caller) returns error? {
+        if 'error is kafka:PayloadBindingError || 'error is kafka:PayloadValidationError {
+            log:printError("Payload error occured", 'error);
+            check caller->seek({
+                partition: 'error.detail().partition,
+                offset: 'error.detail().offset + 1
+            });
+        } else {
+            log:printError("An error occured while lisening to ride events", 'error);
         }
     }
 }
 
-final map<websocket:Caller> clients = {};
+@http:ServiceConfig {
+    cors: {
+        allowOrigins: ["*"],
+        allowMethods: ["POST", "PUT", "GET", "POST", "OPTIONS"],
+        allowHeaders: ["Content-Type", "Access-Control-Allow-Origin", "X-Service-Name"]
+    },
+    auth: [
+        {
+            jwtValidatorConfig: {
+                issuer: "Orbyte",
+                audience: "vEwzbcasJVQm1jVYHUHCjhxZ4tYa",
+                signatureConfig: {
+                    certFile: pub_key
+                },
+                scopeKey: "scp"
+            },
+            scopes: "user"
+        }
+    ]
+}
+service /notification\-service on new http:Listener(PORT) {
+    function init() {
+        log:printInfo(`The Notification Service is initialized on PORT: ${PORT}`);
+    }
 
-public function addClient(string userId, websocket:Caller caller) {
-    lock {
-        clients[userId] = caller;
+    // This should be admin endpoint
+    resource function get notifications/[string id]() returns http:Ok|http:NotFound|error {
+        db:Notification? notif = check db:getNotification(id);
+        if notif is () {
+            return <http:NotFound>{};
+        }
+        return <http:Ok>{body: notif};
+    }
+
+    resource function put notifications/read/[string id](@http:Header string Authorization) returns http:Ok|http:BadRequest|error {
+        string? userId = check getUserIdFromHeader(Authorization);
+        if userId is null {
+            return <http:BadRequest>{body: "Invalid Token"};
+        }
+        time:Utc readAt = time:utcNow();
+        error? err = db:readNotification(id, userId, readAt);
+        if err is error {
+            return err;
+        }
+        return <http:Ok>{};
+    }
+
+    resource function get notifications(@http:Header string Authorization, int lim, int offset) returns http:Ok|http:BadRequest|error {
+        string? userId = check getUserIdFromHeader(Authorization);
+        if userId is null {
+            return <http:BadRequest>{body: "Invalid Token"};
+        }
+        db:Notification[]|error notifications = db:getNotifications(userId, lim, offset);
+        if notifications is error {
+            return notifications;
+        }
+        return <http:Ok>{body: notifications};
     }
 }
 
-public function removeClient(string userId) {
-    lock {
-        _ = clients.removeIfHasKey(userId);
-    }
-}
-
-public function sendNotificationToAll(string message) returns error? {
-    foreach var [_, caller] in clients.entries() {
-        check caller->writeMessage(message);
-    }
-}
-
-public function sendNotificationToUser(string userId, string message) returns error? {
-    websocket:Caller? caller = clients[userId];
-    if caller is websocket:Caller {
-        check caller->writeMessage(message);
-    }
-}
-
-service /notifications on new websocket:Listener(27760) {
-
-    resource function get .(string userId) returns websocket:Service|websocket:UpgradeError {
-        return new NotificationService(userId);
-    }
-}
-
-service class NotificationService {
-    *websocket:Service;
-
-    final string userId;
-
-    public function init(string userId) {
-        self.userId = userId;
+public function handleEvent(Event event) {
+    EventType eventType = event.eventType;
+    string userId = event.userId;
+    string msg;
+    if eventType is RIDE_STARTED {
+        RideStartedData eventData = <RideStartedData>event.data;
+        msg = string `🚴 Your ride with bike ${eventData.bikeId} has started at ${eventData.startStation}. \n
+                            Enjoy your journey!`;
+    } else if eventType is RIDE_ENDED {
+        RideEndedData eventData = <RideEndedData>event.data;
+        msg = string `✅ Your ride with bike ${eventData.bikeId} has ended.\n
+                            Duration: ${eventData.duration} seconds.\n
+                            Fare: ${eventData.fare.toString()} credits.`;
     }
 
-    remote function onOpen(websocket:Caller caller) {
-        io:println("WebSocket connected for user: ", self.userId);
-        addClient(self.userId, caller);
-    }
+    db:NotificationInput notificationInput = {
+        userId: userId,
+        notificationType: eventType,
+        message: msg,
+        isRead: false,
+        createdAt: time:utcNow()
+    };
 
-    remote function onTextMessage(websocket:Caller caller, string text) {
-        io:println("Received message from user: ", text);
-    }
+    ws:sendNotificationToUser(event.userId, msg);
 
-    remote function onClose(websocket:Caller caller, int statusCode, string reason) {
-        io:println("WebSocket closed for user: ", self.userId);
-        removeClient(self.userId);
-    }
+    checkpanic db:insertNotification(notificationInput);
 }
