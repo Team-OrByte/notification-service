@@ -22,10 +22,12 @@ Configuration is provided via `Config.toml`.
 ```toml
 [notification_service]
 PORT = 8084
+pub_key = "./public.crt"
 KAFKA_SERVER_URL = "localhost:9094"
 
 [notification_service.websocket]
 WEBSOCKET_PORT = 27760
+pub_key = "./public.crt"
 
 [notification_service.consumerConfiguration]
 groupId = "notification-service"
@@ -62,50 +64,133 @@ database = "notification-management"
 http://localhost:8084/notification-service
 ```
 
-### 1. **Get Notifications by ID (Admin endpoint)**  
-- **Endpoint:** `GET /notifications/{id}`  
-- **Description:** Fetch a notification by ID.  
-- **Response:**  
-  - `200 OK` → Notification object.  
-  - `404 Not Found` → If notification does not exist.  
+All endpoints (except the **admin endpoint**) require **JWT authentication** via the `Authorization` header:  
+
+```
+Authorization: Bearer {token}
+```
 
 ---
 
-### 2. **Mark Notification as Read**  
-- **Endpoint:** `PUT /notifications/read/{id}`  
-- **Headers:**  
-  - `Authorization: Bearer <JWT>`  
-- **Description:** Marks a notification as read by the authenticated user.  
-- **Response:**  
-  - `200 OK` → Successfully marked as read.  
-  - `400 Bad Request` → Invalid or missing token.  
+### 1. Get Notifications by ID (Admin endpoint)  
+
+Retrieve a specific notification by its ID.  
+
+- **Method:** `GET`  
+- **Endpoint:** `/notifications/{id}`  
+- **Auth:** Admin access only  
+
+##### Example Request  
+```bash
+curl --request GET \
+  --url 'http://localhost:8084/notification-service/notifications/12345' \
+  --header 'Authorization: Bearer {token}' \
+  --header 'Content-Type: application/json'
+  
+```
+
+##### Example Response (200 OK)  
+```json
+{
+  "id": "12345",
+  "userId": "user_001",
+  "notificationType": "RIDE_STARTED",
+  "message": "🚴 Your ride with bike B101 has started at Station A. \n Enjoy your journey!",
+  "isRead": false,
+  "createdAt": "2025-08-27T12:34:56Z",
+  "readAt": null
+}
+```
 
 ---
 
-### 3. **Get User Notifications**  
-- **Endpoint:** `GET /notifications?lim={limit}&offset={offset}`  
-- **Headers:**  
-  - `Authorization: Bearer <JWT>`  
-- **Query Parameters:**  
-  - `lim` → Maximum number of notifications to fetch.  
-  - `offset` → Pagination offset.  
-- **Response:**  
-  - `200 OK` → List of notifications.  
-  - `400 Bad Request` → Invalid or missing token.  
+### 2. Mark Notification as Read  
+
+Mark a specific notification as read for the authenticated user.  
+
+- **Method:** `PUT`  
+- **Endpoint:** `/notifications/read/{id}`  
+- **Auth:** JWT required  
+
+##### Example Request  
+```bash
+curl --request PUT \
+  --url 'http://localhost:8084/notification-service/notifications/read/12345' \
+  --header 'Authorization: Bearer {token}' \
+  --header 'Content-Type: application/json'
+```
+
+##### Example Response (200 OK)  
+```json
+{}
+```
 
 ---
 
-## 🔔 WebSocket Endpoint  
+### 3. Get All Notifications (Paginated)  
+
+Fetch notifications for the authenticated user with pagination.  
+
+- **Method:** `GET`  
+- **Endpoint:** `/notifications?lim={limit}&offset={offset}`  
+- **Auth:** JWT required  
+
+##### Example Request  
+```bash
+curl --request GET \
+  --url 'http://localhost:8084/notification-service/notifications?lim=5&offset=0' \
+  --header 'Authorization: Bearer {token}' \
+  --header 'Content-Type: application/json'
+```
+
+##### Example Response (200 OK)  
+```json
+[
+  {
+    "id": "12345",
+    "userId": "user_001",
+    "notificationType": "RIDE_STARTED",
+    "message": "🚴 Your ride with bike B101 has started at Station A. \n Enjoy your journey!",
+    "isRead": false,
+    "createdAt": "2025-08-27T12:34:56Z",
+    "readAt": null
+  },
+  {
+    "id": "12346",
+    "userId": "user_001",
+    "notificationType": "RIDE_ENDED",
+    "message": "✅ Your ride with bike B101 has ended.\n Duration: 450 seconds.\n Fare: 20 credits.",
+    "isRead": true,
+    "createdAt": "2025-08-27T13:20:00Z",
+    "readAt": "2025-08-27T13:25:10Z"
+  }
+]
+```
+
+---
+
+## 🔔 WebSocket Notifications  
 
 ### Base URL  
 ```
-ws://localhost:27760/notifications
+ws://localhost:8090/notifications/{userId}
 ```
 
-- Clients connect to receive **real-time notifications**.  
-- Notifications are pushed whenever a ride event is consumed from Kafka.  
+- **Auth:** JWT required in the WebSocket handshake.  
+- **Description:** Clients can subscribe to receive **real-time notifications** for a specific `userId`.  
 
----
+##### Example WebSocket Connection (using `wscat`)  
+```bash
+wscat -c "ws://localhost:8090/notifications/user_001" \
+  -H "Authorization: Bearer {token}"
+```
+
+##### Example Push Message from Server  
+```json
+"🚴 Your ride with bike B101 has started at Station A. 
+Enjoy your journey!"
+```
+
 
 ## 🗄️ Database  
 

@@ -3,9 +3,25 @@ import ballerina/log;
 import ballerina/websocket;
 
 configurable int WEBSOCKET_PORT = ?;
+configurable string pub_key = ?;
 
 final map<websocket:Caller> clients = {};
 
+@websocket:ServiceConfig {
+    auth: [
+        {
+            jwtValidatorConfig: {
+                issuer: "Orbyte",
+                audience: "vEwzbcasJVQm1jVYHUHCjhxZ4tYa",
+                signatureConfig: {
+                    certFile: pub_key
+                },
+                scopeKey: "scp"
+            },
+            scopes: "user"
+        }
+    ]
+}
 service /notifications on new websocket:Listener(WEBSOCKET_PORT) {
 
     function init() {
