@@ -1,4 +1,3 @@
-import ballerina/http;
 import ballerina/io;
 import ballerina/jwt;
 import ballerina/log;
@@ -15,11 +14,7 @@ service /notifications on new websocket:Listener(WEBSOCKET_PORT) {
         log:printInfo(`The Notification Websocket is initialized with PORT : ${WEBSOCKET_PORT}`);
     }
 
-    resource function get .(string userId, http:Request req) returns websocket:Service|websocket:UpgradeError {
-        string? token = req.getQueryParamValue("token");
-        if token is () {
-            return error("Missing token");
-        }
+    resource function get .(string userId, string token) returns websocket:Service|websocket:UpgradeError {
         jwt:ValidatorConfig validatorConfig = {
             issuer: "Orbyte",
             audience: "vEwzbcasJVQm1jVYHUHCjhxZ4tYa",

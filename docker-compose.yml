@@ -12,6 +12,7 @@ services:
         - MONGO_INITDB_DATABASE=notification-management
       volumes:
         - mongo_data:/data/db
+        - ./init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
       networks:
         - notification_network
 
