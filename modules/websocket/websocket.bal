@@ -1,4 +1,6 @@
+import ballerina/http;
 import ballerina/io;
+import ballerina/jwt;
 import ballerina/log;
 import ballerina/websocket;
 
@@ -7,28 +9,28 @@ configurable string pub_key = ?;
 
 final map<websocket:Caller> clients = {};
 
-@websocket:ServiceConfig {
-    auth: [
-        {
-            jwtValidatorConfig: {
-                issuer: "Orbyte",
-                audience: "vEwzbcasJVQm1jVYHUHCjhxZ4tYa",
-                signatureConfig: {
-                    certFile: pub_key
-                },
-                scopeKey: "scp"
-            },
-            scopes: "user"
-        }
-    ]
-}
 service /notifications on new websocket:Listener(WEBSOCKET_PORT) {
 
     function init() {
         log:printInfo(`The Notification Websocket is initialized with PORT : ${WEBSOCKET_PORT}`);
     }
 
-    resource function get .(string userId) returns websocket:Service|websocket:UpgradeError {
+    resource function get .(string userId, http:Request req) returns websocket:Service|websocket:UpgradeError {
+        string? token = req.getQueryParamValue("token");
+        if token is () {
+            return error("Missing token");
+        }
+        jwt:ValidatorConfig validatorConfig = {
+            issuer: "Orbyte",
+            audience: "vEwzbcasJVQm1jVYHUHCjhxZ4tYa",
+            signatureConfig: {
+                certFile: pub_key
+            }
+        };
+        jwt:Payload|error payload = jwt:validate(token, validatorConfig);
+        if payload is error {
+            return error("JWT validation error : ", payload);
+        }
         return new NotificationService(userId);
     }
 }
