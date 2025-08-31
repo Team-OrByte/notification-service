@@ -173,16 +173,15 @@ curl --request GET \
 
 ### Base URL  
 ```
-ws://localhost:8090/notifications/{userId}
+ws://localhost:8090/notifications?userId={userId}&token={token}
 ```
 
 - **Auth:** JWT required in the WebSocket handshake.  
-- **Description:** Clients can subscribe to receive **real-time notifications** for a specific `userId`.  
+- **Description:** Clients can subscribe to receive **real-time notifications** for a specific `userId` after validated using `token`.  
 
 ##### Example WebSocket Connection (using `wscat`)  
 ```bash
-wscat -c "ws://localhost:8090/notifications/user_001" \
-  -H "Authorization: Bearer {token}"
+wscat -c "ws://localhost:8090/notifications?userId=user_001&token=auth_token"
 ```
 
 ##### Example Push Message from Server  

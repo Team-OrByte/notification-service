@@ -1,0 +1,22 @@
+[notification_service]
+PORT = 8084
+pub_key = "./public.crt"
+KAFKA_SERVER_URL = "localhost:9094"
+
+[notification_service.websocket]
+WEBSOCKET_PORT = 27760
+pub_key = "./public.crt"
+
+[notification_service.consumerConfiguration]
+groupId = "notification-service"
+topics = ["ride-events"]
+pollingInterval = 1.0
+clientId = "event-producer"
+autoSeekOnValidationFailure = false
+
+[notification_service.db]
+host = "localhost"
+port = 27017
+username = "notif_user"
+password = "notif_pass"
+database = "notification-management"
